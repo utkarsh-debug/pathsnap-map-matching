@@ -1,0 +1,19 @@
+{
+  "objective": "maximise mean macro F1 over 5-fold GroupKFold (groups=trip) on 78 usable training trips",
+  "space": {
+    "n_estimators": "int [100, 600]",
+    "learning_rate": "float log-uniform [0.01, 0.3]",
+    "max_depth": "int [3, 10]",
+    "min_child_weight": "float log-uniform [1, 50]",
+    "subsample": "float uniform [0.5, 1.0]",
+    "colsample_bytree": "float uniform [0.5, 1.0]",
+    "reg_lambda": "float log-uniform [0.01, 50]",
+    "reg_alpha": "float log-uniform [0.001, 10]",
+    "gamma": "float uniform [0, 5]"
+  },
+  "untuned_baseline": {
+    "n_estimators": 300,
+    "learning_rate": 0.05,
+    "max_depth": 6
+  }
+}

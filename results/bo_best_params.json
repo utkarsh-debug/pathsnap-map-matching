@@ -1,0 +1,17 @@
+{
+  "best_params": {
+    "n_estimators": 288,
+    "learning_rate": 0.037378166590057625,
+    "max_depth": 9,
+    "min_child_weight": 1.372791981546064,
+    "subsample": 0.6274985309729981,
+    "colsample_bytree": 0.5210528069333563,
+    "reg_lambda": 1.3298084460033963,
+    "reg_alpha": 0.49336856460205397,
+    "gamma": 4.115009813056933
+  },
+  "best_cv_macro_f1": 0.9164917299061777,
+  "n_trials": 40,
+  "sampler": "TPE (seed 42, 10 random start-up trials)",
+  "search_seconds": 1702.9962358474731
+}
