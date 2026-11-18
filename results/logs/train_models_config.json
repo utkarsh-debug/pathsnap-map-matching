@@ -1,0 +1,32 @@
+{
+  "LogisticRegression": {
+    "family": "Linear / probabilistic",
+    "config": "C=1.0, L2, lbfgs, max_iter=300, scaled",
+    "train_frac": 1.0
+  },
+  "KNN": {
+    "family": "Instance-based",
+    "config": "k=25, distance-weighted, scaled",
+    "train_frac": 0.15
+  },
+  "RandomForest": {
+    "family": "Ensemble (bagging)",
+    "config": "n_estimators=150, max_depth=14, min_samples_leaf=5",
+    "train_frac": 0.5
+  },
+  "LightGBM": {
+    "family": "Boosting",
+    "config": "n_estimators=300, lr=0.05, num_leaves=31",
+    "train_frac": 1.0
+  },
+  "XGBoost": {
+    "family": "Boosting",
+    "config": "n_estimators=300, lr=0.05, max_depth=6, hist",
+    "train_frac": 1.0
+  },
+  "MLP": {
+    "family": "Neural network",
+    "config": "hidden=(64,32), relu, adam lr=1e-3, alpha=1e-4, 30 epochs, scaled",
+    "train_frac": 0.4
+  }
+}
