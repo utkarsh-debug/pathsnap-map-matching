@@ -35,9 +35,8 @@ from src.io import load_trip
 
 N_SPLITS = 5
 FIXED_PARAMS = {
-    "max_speed_mps": 60.0,
-    "max_transition_distance_m": 5000.0,
-    "max_states_per_obs": 15,
+    "max_jump": 250.0,
+    "search_radius": 600.0,
 }
 
 
@@ -137,8 +136,8 @@ def _context_from_frame(partition: str, trip_id: str, frame: pd.DataFrame,
         classifier_prediction[obs] = best_rows["arc"].to_numpy(dtype=np.int64)
 
     hits = np.zeros(len(trip.track), dtype=bool)
-    for obs, states in enumerate(candidates):
-        hits[obs] = any(state.arc == int(labels[obs]) for state in states)
+    for obs, (arcs, _fractions, _probabilities) in enumerate(candidates):
+        hits[obs] = np.any(arcs == int(labels[obs]))
     graph = TripGraph(trip.nodes[["x", "y"]].to_numpy(), trip.arcs.u.values, trip.arcs.v.values)
     return TripContext(
         trip_id=str(trip_id), graph=graph,
@@ -243,11 +242,11 @@ def _evaluate(contexts: list[TripContext], params: HMMParams | None) -> dict:
 
 def _suggest(trial: optuna.Trial) -> dict:
     return {
-        "emission_power": trial.suggest_float("emission_power", 0.5, 4.0, log=True),
-        "transition_weight": trial.suggest_float("transition_weight", 0.2, 5.0, log=True),
-        "transition_sigma_m": trial.suggest_float("transition_sigma_m", 8.0, 100.0, log=True),
-        "transition_sigma_per_s": trial.suggest_float("transition_sigma_per_s", 0.1, 10.0, log=True),
-        "max_gap_s": trial.suggest_float("max_gap_s", 5.0, 180.0, log=True),
+        "alpha": trial.suggest_float("alpha", 0.2, 3.0, log=True),
+        "beta": trial.suggest_float("beta", 3.0, 100.0, log=True),
+        "unreach_penalty": trial.suggest_float("unreach_penalty", 2.0, 40.0),
+        "back_penalty": trial.suggest_float("back_penalty", 0.0, 20.0),
+        "max_dt": trial.suggest_float("max_dt", 3.0, 30.0),
     }
 
 

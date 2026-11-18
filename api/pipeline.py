@@ -32,8 +32,12 @@ def _load_hmm():
     if not p.exists():
         log.warning("%s missing: classifier-only mode", p.name)
         return None
-    cfg = json.loads(p.read_text())
-    params = HMMParams(**cfg["best_params"], **cfg.get("fixed", {}))
+    try:
+        cfg = json.loads(p.read_text())
+        params = HMMParams(**cfg["best_params"], **cfg.get("fixed", {}))
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+        log.warning("%s has invalid HMM settings (%s): classifier-only mode", p.name, e)
+        return None
     return dict(params=params, TripGraph=TripGraph, candidates_from_frame=candidates_from_frame,
                 viterbi_decode=viterbi_decode)
 
