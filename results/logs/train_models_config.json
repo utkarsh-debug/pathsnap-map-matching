@@ -6,13 +6,13 @@
   },
   "KNN": {
     "family": "Instance-based",
-    "config": "k=25, distance-weighted, scaled",
-    "train_frac": 0.15
+    "config": "k=25, distance-weighted, euclidean, scaled",
+    "train_frac": 1.0
   },
   "RandomForest": {
     "family": "Ensemble (bagging)",
     "config": "n_estimators=150, max_depth=14, min_samples_leaf=5",
-    "train_frac": 0.5
+    "train_frac": 1.0
   },
   "LightGBM": {
     "family": "Boosting",
@@ -26,7 +26,7 @@
   },
   "MLP": {
     "family": "Neural network",
-    "config": "hidden=(64,32), relu, adam lr=1e-3, alpha=1e-4, 30 epochs, scaled",
-    "train_frac": 0.4
+    "config": "hidden=(64,32), relu, adam lr=1e-3, alpha=1e-4, 30 epochs, batch 512, scaled",
+    "train_frac": 1.0
   }
 }
