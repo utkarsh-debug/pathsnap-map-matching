@@ -1,0 +1,38 @@
+{
+  "best_params": {
+    "alpha": 2.5427667584642113,
+    "beta": 53.66705665324683,
+    "unreach_penalty": 11.472127396108045,
+    "back_penalty": 0.40171717113683836,
+    "max_dt": 3.0724294386133124
+  },
+  "tuning_objective": "mean pointwise Top-1 of HMM output on 20 training trips (OOF probabilities)",
+  "tuning_trips": [
+    "00000058",
+    "00000093",
+    "00000018",
+    "00000088",
+    "00000098",
+    "00000092",
+    "00000012",
+    "00000006",
+    "00000050",
+    "00000047",
+    "00000081",
+    "00000083",
+    "00000044",
+    "00000070",
+    "00000008",
+    "00000066",
+    "00000074",
+    "00000035",
+    "00000084",
+    "00000045"
+  ],
+  "n_trials": 30,
+  "sequence_metric": "SequenceMatcher ratio on consecutive-deduplicated per-observation arc labels; autojunk=False",
+  "fixed": {
+    "max_jump": 250.0,
+    "search_radius": 600.0
+  }
+}
