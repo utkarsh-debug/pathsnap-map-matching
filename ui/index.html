@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1220">
+  <title>PathSnap | Route evaluation</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="PathSnap home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none">
+            <path d="M6 24.5 12.3 18l4.1 3.2L26 9" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="6" cy="24.5" r="2.2" fill="currentColor"/>
+            <circle cx="26" cy="9" r="2.2" fill="currentColor"/>
+          </svg>
+        </span>
+        <span>PathSnap</span>
+      </a>
+      <div class="connection-state" id="connection-state" data-state="idle" role="status" aria-live="polite">
+        <span class="state-dot" aria-hidden="true"></span>
+        <span id="connection-label">API not connected</span>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="intro">
+        <p class="eyebrow">DISTRIBUTED MAP-MATCHING</p>
+        <h1>Route evaluation</h1>
+        <p class="intro-copy">Choose a trip to run the PathSnap prediction pipeline and inspect its reconstructed route.</p>
+      </section>
+
+      <section class="panel connection-panel" aria-labelledby="api-heading">
+        <div class="panel-heading compact-heading">
+          <div>
+            <p class="eyebrow">LAPTOP 1</p>
+            <h2 id="api-heading">Connect to the prediction API</h2>
+          </div>
+          <span class="api-chip">FastAPI</span>
+        </div>
+        <form class="connect-form" id="connect-form">
+          <label class="visually-hidden" for="api-base">Laptop 1 API address</label>
+          <input id="api-base" name="api-base" type="url" inputmode="url" spellcheck="false"
+                 placeholder="http://192.168.1.10:8000" autocomplete="url" required>
+          <button class="button button-primary" id="connect-button" type="submit">Connect</button>
+        </form>
+        <p class="form-help" id="connection-help">Enter Laptop 1’s address on the shared network. The address is saved in this browser.</p>
+      </section>
+
+      <div class="main-grid">
+        <aside class="panel trip-panel" aria-labelledby="trip-heading">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">PREDICTION</p>
+              <h2 id="trip-heading">Select a trip</h2>
+            </div>
+            <span class="trip-count" id="trip-count">— trips</span>
+          </div>
+
+          <label class="field-label" for="trip-select">Available trips</label>
+          <select id="trip-select" disabled>
+            <option value="">Connect to load trips</option>
+          </select>
+          <button class="button button-run" id="run-button" type="button" disabled>
+            <span>Run prediction</span>
+            <span aria-hidden="true">↗</span>
+          </button>
+          <p class="request-note" id="request-note" role="status" aria-live="polite">The selected trip is processed by the API.</p>
+
+          <div class="system-card" id="system-card" aria-live="polite">
+            <div class="system-card-top">
+              <span class="system-icon" aria-hidden="true">⌁</span>
+              <span class="system-card-label">MODEL STATUS</span>
+            </div>
+            <p class="system-model" id="system-model">Waiting for API</p>
+            <div class="system-meta">
+              <span>Decoder</span>
+              <strong id="system-decoder">—</strong>
+            </div>
+          </div>
+        </aside>
+
+        <section class="results-area" aria-label="Prediction results">
+          <div class="empty-state panel" id="empty-state">
+            <div class="empty-icon" aria-hidden="true">
+              <svg viewBox="0 0 64 64" fill="none">
+                <path d="M12 46 24 34l9 7 19-24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="12" cy="46" r="4" fill="currentColor"/>
+                <circle cx="52" cy="17" r="4" fill="currentColor"/>
+              </svg>
+            </div>
+            <h2>Your route will appear here</h2>
+            <p>Connect to Laptop 1, choose one of its available trips, and run a prediction.</p>
+          </div>
+
+          <div class="results-content hidden" id="results-content">
+            <section class="panel map-panel" aria-labelledby="map-heading">
+              <div class="panel-heading map-heading">
+                <div>
+                  <p class="eyebrow">TRIP <span id="result-trip-id">—</span></p>
+                  <h2 id="map-heading">Reconstructed route</h2>
+                </div>
+                <div class="map-legend" aria-label="Map legend">
+                  <span><i class="legend-dot gps-dot"></i>GPS observations</span>
+                  <span><i class="legend-line route-line"></i>Predicted route</span>
+                </div>
+              </div>
+              <div class="map-info-row">
+                <p id="map-summary">— GPS observations</p>
+                <p id="map-caption">Local coordinate view</p>
+              </div>
+              <div class="map-frame">
+                <svg id="route-map" class="route-map" viewBox="0 0 1000 600" role="img"
+                     aria-label="GPS observations and predicted route for the selected trip" preserveAspectRatio="xMidYMid meet">
+                  <rect class="map-background" x="0" y="0" width="1000" height="600" rx="18"></rect>
+                  <g id="map-grid"></g>
+                  <path id="gps-trace" class="gps-trace" d=""></path>
+                  <g id="gps-points"></g>
+                  <path id="predicted-path" class="predicted-path" d=""></path>
+                  <g id="route-markers"></g>
+                  <text class="axis-label axis-label-x" x="500" y="584">LONGITUDE</text>
+                  <text class="axis-label axis-label-y" x="22" y="300" transform="rotate(-90 22 300)">LATITUDE</text>
+                </svg>
+                <div class="map-empty hidden" id="map-empty">The API did not return enough route coordinates to draw this trip.</div>
+              </div>
+            </section>
+
+            <section class="metrics-section" aria-labelledby="metrics-heading">
+              <div class="metrics-title-row">
+                <div>
+                  <p class="eyebrow">SERVER-SIDE EVALUATION</p>
+                  <h2 id="metrics-heading">Trip metrics</h2>
+                </div>
+                <span class="result-model" id="result-model">—</span>
+              </div>
+              <div class="metric-grid" id="metric-grid"></div>
+              <p class="privacy-note"><span class="privacy-icon" aria-hidden="true">●</span> Reference labels stay on the API server. This page only displays the API response and its metrics.</p>
+            </section>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <span>PathSnap · Distributed map-matching</span>
+      <span id="last-updated">Ready when you are</span>
+    </footer>
+  </div>
+</body>
+</html>

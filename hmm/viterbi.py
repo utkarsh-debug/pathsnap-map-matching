@@ -1,188 +1,287 @@
-"""HMM / Viterbi route reconstruction on top of classifier probabilities.
+"""Candidate-state HMM and Viterbi route decoder used by the FastAPI pipeline.
 
-Hidden state   : the road segment (directed arc, arc_id) the vehicle is on at observation i,
-                 restricted to that observation's candidate set (K nearest arcs, see src/candidates.py).
-                 State index -> arc_id correspondence is kept explicitly (cand arrays), so the decoded state
-                 sequence maps straight back to road segments.
-Emission       : log P(obs_i | arc) = alpha * log q_i(arc),  q_i = classifier probability normalised over the
-                 candidates of observation i (the classifier already encodes distance, heading, speed context).
-Transition     : Newson-Krumm style. For consecutive observations with candidate arcs a -> b
-                     d_net = route distance along the network from the projected point on a to that on b
-                     d_gps = straight-line distance between the two GPS fixes
-                     log P(b | a) = -|d_net - d_gps| / beta
-                 same arc moving forward: d_net = (frac_b - frac_a) * len ; moving backwards on the same arc
-                 is penalised by `back_penalty`. Unreachable pairs (no path within the search radius) get the
-                 finite log-penalty `unreach_penalty` instead of -inf, so the decoder can always recover.
-Gaps           : if the time gap exceeds `max_dt` seconds or the GPS jump exceeds `max_jump` metres the step is a
-                 "break": the transition matrix is made uninformative (all zero) and the chain effectively
-                 restarts from the emission scores, instead of forcing an unrealistic connection.
-Decoder        : standard Viterbi recurrence in log-space
-                     delta_i(b) = e_i(b) + max_a [ delta_{i-1}(a) + T_{i-1,i}(a,b) ]
-                 with back-pointers; the best final state is traced back.
+Each state is a directed road arc from the per-observation candidate set. Model
+probabilities supply the emissions. Transitions use directed shortest-path
+distance between candidate positions and the GPS displacement between points.
+Long timestamp gaps and candidate-empty observations split the sequence so that
+the decoder still returns one result slot per GPS observation.
 """
+from __future__ import annotations
+
+from collections import OrderedDict
 from dataclasses import dataclass
+from typing import Iterable
 
 import numpy as np
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import dijkstra
+from scipy.special import logsumexp
 
 
-@dataclass
+@dataclass(frozen=True)
 class HMMParams:
-    alpha: float = 1.0            # emission weight
-    beta: float = 30.0            # transition scale (metres)
-    unreach_penalty: float = 15.0 # log-penalty for unreachable arc pairs
-    back_penalty: float = 5.0     # log-penalty for moving backwards along the same arc
-    max_dt: float = 10.0          # seconds; larger -> break
-    max_jump: float = 250.0       # metres; larger -> break
-    search_radius: float = 600.0  # metres, bounded Dijkstra radius
+    """Decoder settings. `best_params` in the JSON artifact can override these defaults."""
+
+    emission_power: float = 1.0
+    transition_weight: float = 1.0
+    transition_sigma_m: float = 25.0
+    transition_sigma_per_s: float = 2.0
+    max_gap_s: float = 30.0
+    max_speed_mps: float = 60.0
+    max_transition_distance_m: float = 5000.0
+    max_states_per_obs: int = 15
+
+    def __post_init__(self):
+        if self.emission_power <= 0:
+            raise ValueError("emission_power must be positive")
+        if self.transition_weight <= 0:
+            raise ValueError("transition_weight must be positive")
+        if self.transition_sigma_m <= 0 or self.transition_sigma_per_s < 0:
+            raise ValueError("transition sigma values must be positive (per-second may be zero)")
+        if self.max_gap_s <= 0 or self.max_speed_mps <= 0 or self.max_transition_distance_m <= 0:
+            raise ValueError("gap, speed, and transition-distance limits must be positive")
+        if self.max_states_per_obs < 1:
+            raise ValueError("max_states_per_obs must be at least one")
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """A candidate directed arc and its projection/probability at one observation."""
+
+    arc: int
+    frac: float
+    probability: float
+    rank: int = 0
 
 
 class TripGraph:
-    """Directed road graph of one trip with a cache of bounded shortest-path searches."""
+    """Directed road graph with metric arc lengths and bounded shortest-path lookup."""
 
-    def __init__(self, nodes_xy, arcs_u, arcs_v):
-        self.u, self.v = np.asarray(arcs_u), np.asarray(arcs_v)
-        d = nodes_xy[self.v] - nodes_xy[self.u]
-        self.arc_len = np.hypot(d[:, 0], d[:, 1])
-        n = len(nodes_xy)
-        self.n = n
-        w = np.maximum(self.arc_len, 1e-3)   # zero-length arcs would be dropped by csr otherwise
-        self.csr = csr_matrix((w, (self.u, self.v)), shape=(n, n))
-        self.edge_arc = {}
-        for arc, (u, v) in enumerate(zip(self.u, self.v)):
-            key = (int(u), int(v))
-            old = self.edge_arc.get(key)
-            if old is None or self.arc_len[arc] < self.arc_len[old]:
-                self.edge_arc[key] = arc
-        # Sparse constructors sum duplicate edges; shortest paths need the shortest parallel arc instead.
-        pairs = list(self.edge_arc)
-        self.csr = csr_matrix(
-            ([max(self.arc_len[self.edge_arc[p]], 1e-3) for p in pairs],
-             ([p[0] for p in pairs], [p[1] for p in pairs])), shape=(n, n))
-        self._cache = {}
+    def __init__(self, nodes_xy, arc_u, arc_v, distance_cache_size: int = 12):
+        xy = np.asarray(nodes_xy, dtype=float)
+        self.u = np.asarray(arc_u, dtype=np.int64).reshape(-1)
+        self.v = np.asarray(arc_v, dtype=np.int64).reshape(-1)
+        if xy.ndim != 2 or xy.shape[1] != 2:
+            raise ValueError("nodes_xy must have shape (n_nodes, 2)")
+        if len(self.u) != len(self.v):
+            raise ValueError("arc_u and arc_v must have the same length")
+        if not len(xy) or (self.u.size and (self.u.min() < 0 or self.v.min() < 0 or
+                                             self.u.max() >= len(xy) or self.v.max() >= len(xy))):
+            raise ValueError("road arcs refer to an invalid node")
 
-    def reach(self, src, radius):
-        """Sorted (nodes, dists) reachable from src within radius."""
-        key = (int(src), radius)
-        hit = self._cache.get(key)
-        if hit is None:
-            row = dijkstra(self.csr, directed=True, indices=int(src), limit=radius)
-            nodes = np.flatnonzero(np.isfinite(row))
-            hit = (nodes, row[nodes])
-            self._cache[key] = hit
-        return hit
+        self.n_nodes = len(xy)
+        self.n_arcs = len(self.u)
+        delta = xy[self.v] - xy[self.u]
+        self.arc_lengths = np.hypot(delta[:, 0], delta[:, 1])
 
-    def sp_matrix(self, src_nodes, dst_nodes, radius):
-        """Shortest path length src_nodes[i] -> dst_nodes[j] (inf if beyond radius)."""
-        out = np.full((len(src_nodes), len(dst_nodes)), np.inf)
-        for i, s in enumerate(src_nodes):
-            nodes, dist = self.reach(s, radius)
-            pos = np.searchsorted(nodes, dst_nodes)
-            pos = np.clip(pos, 0, len(nodes) - 1)
-            ok = nodes[pos] == dst_nodes
-            out[i, ok] = dist[pos[ok]]
-        return out
-
-
-def viterbi_decode(graph, track_xy, track_t, obs_cands, params=HMMParams()):
-    """obs_cands: list over observations of (arc_ids, frac, prob) arrays (may be empty).
-    Returns predicted arc per observation (-1 where an observation has no candidate) and
-    a list of break indices (steps where the chain was restarted)."""
-    n = len(obs_cands)
-    pred = np.full(n, -1, dtype=np.int64)
-    breaks = []
-    prev_idx = None                       # last observation index that has candidates
-    delta = None
-    back = {}                             # i -> argmax pointers into previous candidate list
-    for i in range(n):
-        arcs, frac, prob = obs_cands[i]
-        if len(arcs) == 0:
-            breaks.append(i)              # missing candidates: skip this point, chain continues across it
-            continue
-        q = prob / max(prob.sum(), 1e-12)
-        em = params.alpha * np.log(np.clip(q, 1e-9, 1.0))
-        if prev_idx is None:
-            delta = em
+        # scipy sums duplicate sparse entries. Keep the shortest edge for each
+        # node pair so duplicate arcs do not inflate the network distance.
+        if self.n_arcs:
+            edge_keys = self.u * self.n_nodes + self.v
+            unique_keys, inverse = np.unique(edge_keys, return_inverse=True)
+            edge_lengths = np.full(len(unique_keys), np.inf, dtype=float)
+            np.minimum.at(edge_lengths, inverse, self.arc_lengths)
+            edge_lengths[edge_lengths == 0] = 1e-6
+            rows = unique_keys // self.n_nodes
+            cols = unique_keys % self.n_nodes
+            self._adjacency = csr_matrix((edge_lengths, (rows, cols)),
+                                         shape=(self.n_nodes, self.n_nodes))
         else:
-            pa, pf, _ = obs_cands[prev_idx]
-            dt = track_t[i] - track_t[prev_idx]
-            dgps = float(np.hypot(*(track_xy[i] - track_xy[prev_idx])))
-            if dt > params.max_dt or dgps > params.max_jump:
-                T = np.zeros((len(pa), len(arcs)))
+            self._adjacency = csr_matrix((self.n_nodes, self.n_nodes), dtype=float)
+
+        self._distance_cache_size = max(1, int(distance_cache_size))
+        self._distance_cache: OrderedDict[tuple[int, float], tuple[np.ndarray, np.ndarray]] = OrderedDict()
+
+    def _distances_from(self, source_node: int, cutoff_m: float) -> tuple[np.ndarray, np.ndarray]:
+        source = int(source_node)
+        cutoff = float(cutoff_m)
+        key = (source, round(cutoff, 3))
+        cached = self._distance_cache.get(key)
+        if cached is not None:
+            self._distance_cache.move_to_end(key)
+            return cached
+
+        if source < 0 or source >= self.n_nodes:
+            return np.empty(0, dtype=np.int32), np.empty(0, dtype=np.float32)
+        distances = dijkstra(self._adjacency, directed=True, indices=source, limit=cutoff)
+        reachable = np.flatnonzero(np.isfinite(distances)).astype(np.int32)
+        values = distances[reachable].astype(np.float32)
+        result = (reachable, values)
+        self._distance_cache[key] = result
+        if len(self._distance_cache) > self._distance_cache_size:
+            self._distance_cache.popitem(last=False)
+        return result
+
+    def _node_distance(self, source_node: int, target_node: int, cutoff_m: float) -> float:
+        nodes, distances = self._distances_from(source_node, cutoff_m)
+        pos = int(np.searchsorted(nodes, int(target_node)))
+        if pos >= len(nodes) or int(nodes[pos]) != int(target_node):
+            return float("inf")
+        return float(distances[pos])
+
+    def distance_between_candidates(self, previous: Candidate, current: Candidate,
+                                    cutoff_m: float) -> float | None:
+        """Directed route distance between projected positions on two candidate arcs."""
+        if not (0 <= previous.arc < self.n_arcs and 0 <= current.arc < self.n_arcs):
+            return None
+        previous_length = float(self.arc_lengths[previous.arc])
+        current_length = float(self.arc_lengths[current.arc])
+        if previous.arc == current.arc:
+            distance = abs(current.frac - previous.frac) * previous_length
+            return distance if distance <= cutoff_m else None
+
+        from_node = int(self.v[previous.arc])
+        to_node = int(self.u[current.arc])
+        offset = (1.0 - previous.frac) * previous_length
+        approach = current.frac * current_length
+        remaining = cutoff_m - offset - approach
+        if remaining < 0:
+            return None
+        if from_node == to_node:
+            middle = 0.0
+        else:
+            middle = self._node_distance(from_node, to_node, cutoff_m)
+        if not np.isfinite(middle) or middle > remaining:
+            return None
+        return float(offset + middle + approach)
+
+
+def candidates_from_frame(frame, n_obs: int) -> list[list[Candidate]]:
+    """Convert a feature frame into one candidate list per observation.
+
+    The API passes columns `obs`, `arc`, `frac`, `p`, and `rank`. Duplicate arc
+    entries are collapsed, retaining the candidate with the highest probability.
+    """
+    if n_obs < 0:
+        raise ValueError("n_obs cannot be negative")
+    by_obs: list[dict[int, Candidate]] = [dict() for _ in range(n_obs)]
+    if frame is None or len(frame) == 0:
+        return [[] for _ in range(n_obs)]
+
+    required = {"obs", "arc", "frac", "p", "rank"}
+    if not required.issubset(frame.columns):
+        raise ValueError(f"candidate frame is missing columns: {sorted(required - set(frame.columns))}")
+
+    for obs, arc, frac, probability, rank in frame[["obs", "arc", "frac", "p", "rank"]].itertuples(index=False, name=None):
+        try:
+            obs_i, arc_i = int(obs), int(arc)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not 0 <= obs_i < n_obs or arc_i < 0:
+            continue
+        frac_f = float(frac) if np.isfinite(frac) else 0.5
+        prob_f = float(probability) if np.isfinite(probability) else 0.0
+        try:
+            rank_i = int(rank)
+        except (TypeError, ValueError, OverflowError):
+            rank_i = 0
+        candidate = Candidate(arc_i, float(np.clip(frac_f, 0.0, 1.0)),
+                              float(np.clip(prob_f, 0.0, 1.0)), rank_i)
+        old = by_obs[obs_i].get(arc_i)
+        if old is None or candidate.probability > old.probability:
+            by_obs[obs_i][arc_i] = candidate
+    return [sorted(group.values(), key=lambda item: (item.rank, -item.probability)) for group in by_obs]
+
+
+def _emission_log_scores(states: list[Candidate], params: HMMParams) -> np.ndarray:
+    probabilities = np.asarray([state.probability for state in states], dtype=float)
+    probabilities = np.clip(probabilities, 1e-12, 1.0)
+    total = float(probabilities.sum())
+    if not np.isfinite(total) or total <= 0:
+        probabilities.fill(1.0 / len(states))
+    else:
+        probabilities /= total
+    return params.emission_power * np.log(probabilities)
+
+
+def _transition_matrix(previous_states: list[Candidate], current_states: list[Candidate],
+                       graph: TripGraph, gps_distance_m: float, dt_s: float,
+                       params: HMMParams) -> np.ndarray:
+    transitions = np.full((len(previous_states), len(current_states)), -np.inf, dtype=float)
+    sigma = params.transition_sigma_m + params.transition_sigma_per_s * dt_s
+    max_network_distance = params.max_transition_distance_m
+    for i, previous in enumerate(previous_states):
+        for j, current in enumerate(current_states):
+            route_distance = graph.distance_between_candidates(previous, current, max_network_distance)
+            if route_distance is None:
+                continue
+            if route_distance > params.max_speed_mps * dt_s + 4.0 * sigma:
+                continue
+            error = (route_distance - gps_distance_m) / sigma
+            transitions[i, j] = -0.5 * params.transition_weight * error * error
+        reachable = np.isfinite(transitions[i])
+        if reachable.any():
+            transitions[i, reachable] -= logsumexp(transitions[i, reachable])
+    return transitions
+
+
+def viterbi_decode(graph: TripGraph, track_xy, timestamps, candidates: Iterable[Iterable[Candidate]],
+                   params: HMMParams) -> tuple[np.ndarray, list[int]]:
+    """Decode an arc for each observation and return indices where a new segment starts.
+
+    Unreachable or speed-infeasible transitions break the sequence and restart
+    Viterbi at that observation. Missing candidate rows produce -1 for that point;
+    all later points are still decoded. The caller can fall back to its
+    classifier-only result for any -1 value.
+    """
+    xy = np.asarray(track_xy, dtype=float)
+    times = np.asarray(timestamps, dtype=float).reshape(-1)
+    if xy.ndim != 2 or xy.shape[1] != 2:
+        raise ValueError("track_xy must have shape (n_observations, 2)")
+    if len(xy) != len(times):
+        raise ValueError("track_xy and timestamps must have the same length")
+    raw_candidates = list(candidates)
+    if len(raw_candidates) != len(times):
+        raise ValueError("candidate list must have one entry per observation")
+
+    states_by_obs: list[list[Candidate]] = []
+    for row in raw_candidates:
+        states = [c for c in row if isinstance(c, Candidate) and 0 <= c.arc < graph.n_arcs]
+        if len(states) > params.max_states_per_obs:
+            states = sorted(states, key=lambda item: item.probability, reverse=True)[:params.max_states_per_obs]
+        states_by_obs.append(states)
+
+    n_obs = len(times)
+    prediction = np.full(n_obs, -1, dtype=np.int64)
+    breaks: list[int] = []
+    i = 0
+    while i < n_obs:
+        if not states_by_obs[i]:
+            i += 1
+            if i < n_obs:
                 breaks.append(i)
-            else:
-                sp = graph.sp_matrix(graph.v[pa], graph.u[arcs], params.search_radius)
-                dnet = (1.0 - pf)[:, None] * graph.arc_len[pa][:, None] + sp + (frac * graph.arc_len[arcs])[None, :]
-                same = pa[:, None] == arcs[None, :]
-                fwd = (frac[None, :] >= pf[:, None])
-                d_same = (frac[None, :] - pf[:, None]) * graph.arc_len[arcs][None, :]
-                dnet = np.where(same & fwd, d_same, dnet)
-                T = -np.abs(dnet - dgps) / params.beta
-                T = np.where(same & ~fwd, T - params.back_penalty, T)
-                T = np.where(np.isfinite(dnet), T, -params.unreach_penalty)
-            cand = delta[:, None] + T
-            bp = np.argmax(cand, axis=0)
-            delta = em + cand[bp, np.arange(len(arcs))]
-            back[i] = (prev_idx, bp)
-        prev_idx = i
-        obs_cands[i] = (arcs, frac, prob)
-        # remember delta for the trace-back only through back pointers; store final choice later
-    # trace back from best final state
-    if prev_idx is None:
-        return pred, breaks
-    k = int(np.argmax(delta))
-    i = prev_idx
-    while True:
-        pred[i] = obs_cands[i][0][k]
-        if i not in back:
-            break
-        j, bp = back[i]
-        k = int(bp[k])
+            continue
+
+        segment_start = i
+        scores = _emission_log_scores(states_by_obs[i], params)
+        back_pointers: list[np.ndarray] = []
+        j = i + 1
+        while j < n_obs and states_by_obs[j]:
+            dt = float(times[j] - times[j - 1])
+            if not np.isfinite(dt) or dt <= 0 or dt > params.max_gap_s:
+                break
+            gps_distance = float(np.linalg.norm(xy[j] - xy[j - 1]))
+            transitions = _transition_matrix(states_by_obs[j - 1], states_by_obs[j], graph,
+                                             gps_distance, dt, params)
+            combined = scores[:, None] + transitions
+            best_previous = np.argmax(combined, axis=0)
+            best_scores = combined[best_previous, np.arange(combined.shape[1])]
+            if not np.isfinite(best_scores).any():
+                break
+            back_pointers.append(best_previous)
+            scores = best_scores + _emission_log_scores(states_by_obs[j], params)
+            j += 1
+
+        state_index = int(np.argmax(scores))
+        segment_indices = [0] * (j - segment_start)
+        segment_indices[-1] = state_index
+        for offset in range(len(segment_indices) - 1, 0, -1):
+            segment_indices[offset - 1] = int(back_pointers[offset - 1][segment_indices[offset]])
+        for offset, chosen in enumerate(segment_indices):
+            prediction[segment_start + offset] = states_by_obs[segment_start + offset][chosen].arc
+
+        if j < n_obs:
+            breaks.append(j)
         i = j
-    return pred, breaks
 
-
-def candidates_from_frame(df, n_obs):
-    """Group a candidate frame (obs, arc, frac, p) into per-observation arrays."""
-    out = [(np.empty(0, int), np.empty(0), np.empty(0)) for _ in range(n_obs)]
-    if df.empty:
-        return out
-    df = df.sort_values(["obs", "rank"] if "rank" in df else ["obs"])
-    obs = df["obs"].values
-    bounds = np.flatnonzero(np.r_[True, obs[1:] != obs[:-1], True])
-    arcs, frac, p = df["arc"].values, df["frac"].values, df["p"].values
-    for s, e in zip(bounds[:-1], bounds[1:]):
-        out[obs[s]] = (arcs[s:e].astype(np.int64), frac[s:e].astype(float), p[s:e].astype(float))
-    return out
-
-
-def stitch_route(graph, pred_arcs):
-    """Turn the per-point arc sequence into a connected road route: consecutive duplicates are merged
-    and disconnected neighbours are joined by the shortest path between them (if one exists nearby).
-    Returns (route_arcs, n_disconnected_joins)."""
-    seq = [int(a) for a in pred_arcs if a >= 0]
-    dedup = [a for k, a in enumerate(seq) if k == 0 or a != seq[k - 1]]
-    route, gaps = [], 0
-    for k, a in enumerate(dedup):
-        if k == 0:
-            route.append(a); continue
-        b = route[-1]
-        if graph.v[b] == graph.u[a]:
-            route.append(a); continue
-        # shortest path v_b -> u_a, returned as arcs
-        src, dst = int(graph.v[b]), int(graph.u[a])
-        if src == dst:
-            route.append(a); continue
-        dist, pred = dijkstra(graph.csr, directed=True, indices=src, return_predecessors=True, limit=2000.0)
-        if not np.isfinite(dist[dst]):
-            gaps += 1; route.append(a); continue
-        path = [dst]
-        while path[-1] != src:
-            path.append(int(pred[path[-1]]))
-        path = path[::-1]
-        # nodes -> arcs via lookup
-        for x, y in zip(path[:-1], path[1:]):
-            route.append(int(graph.edge_arc[(x, y)]))
-        route.append(a)
-    return route, gaps
+    return prediction, sorted(set(index for index in breaks if 0 < index < n_obs))
