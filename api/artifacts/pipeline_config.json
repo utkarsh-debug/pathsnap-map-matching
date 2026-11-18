@@ -1,5 +1,5 @@
 {
-  "model_name": "XGBoost",
+  "model_name": "XGBoost_tuned",
   "model_file": "model.joblib",
   "features": [
     "dist",
@@ -26,5 +26,16 @@
     "k": 15,
     "radius_m": 80.0
   },
-  "seed": 42
+  "seed": 42,
+  "hyperparameters": {
+    "n_estimators": 389,
+    "learning_rate": 0.05570473223314245,
+    "max_depth": 9,
+    "min_child_weight": 2.495185462577053,
+    "subsample": 0.5973569671820553,
+    "colsample_bytree": 0.594505306986173,
+    "reg_lambda": 0.09716587046530163,
+    "reg_alpha": 0.06400617208628398,
+    "gamma": 4.753784716061056
+  }
 }
