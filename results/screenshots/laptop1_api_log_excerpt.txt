@@ -1,0 +1,12 @@
+PATHSNAP - LAPTOP 1 (WINDOWS): ACTUAL API REQUEST LOG EXCERPT
+Source: running uvicorn server log; student-test trips only.
+Remote requests below came from Laptop 2 at 10.20.205.142.
+
+14:15:14 | INFO | >>> POST /predict from 10.20.205.142
+14:15:14 | INFO | trip 00000009: 1049 points | decoder=hmm_viterbi | Top-1 0.8684 (classifier-only 0.8646), continuity 0.9284, candidate miss 0.0057 | pipeline 251 ms
+14:15:14 | INFO | <<< POST /predict -> 200 in 322 ms
+INFO:     10.20.205.142:47348 - "POST /predict HTTP/1.1" 200 OK
+14:15:24 | INFO | >>> POST /predict from 10.20.205.142
+14:15:24 | INFO | trip 00000009: 1049 points | decoder=hmm_viterbi | Top-1 0.8684 (classifier-only 0.8646), continuity 0.9284, candidate miss 0.0057 | pipeline 256 ms
+14:15:24 | INFO | <<< POST /predict -> 200 in 299 ms
+INFO:     10.20.205.142:40302 - "POST /predict HTTP/1.1" 200 OK
