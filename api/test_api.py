@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from api.main import app
 
 ALLOWED_KEYS = {"trip_id", "n_points", "model", "decoder", "gps", "predicted_arcs", "predicted_route",
-                "timings_ms", "metrics"}
+                "predicted_route_segments", "route_geometry", "timings_ms", "metrics"}
 FORBIDDEN_SUBSTR = ("reference", "label", "ground", "truth", "route_arcs")
 
 
@@ -25,6 +25,8 @@ def main():
             assert not any(s in k.lower() for k in j for s in FORBIDDEN_SUBSTR if k != "predicted_route")
             assert len(j["gps"]) == j["n_points"] == len(j["predicted_arcs"])
             assert len(j["predicted_route"]) >= 2
+            assert j["route_geometry"]["segment_count"] == len(j["predicted_route_segments"])
+            assert all(len(segment) >= 2 for segment in j["predicted_route_segments"])
             m = j["metrics"]
             rows.append((t["trip_id"], j["n_points"], m["top1_accuracy"], m["top1_accuracy_classifier_only"],
                          m["route_continuity"], m["candidate_miss_rate"], j["timings_ms"]["total_ms"]))

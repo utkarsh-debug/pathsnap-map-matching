@@ -52,6 +52,28 @@ trip 00000052: 262 points | decoder=hmm_viterbi | Top-1 0.9580 (classifier-only 
 `metrics`: Top-1 accuracy (final and classifier-only), route continuity, route arc precision/recall/F1, candidate miss rate.
 No reference route or labels are ever returned.
 
+### Disconnected routes and display geometry
+
+The response also provides `predicted_route_segments`: a list of separate
+`[[lat, lon], ...]` polylines. Draw these **individually**, never as one flattened
+line. The bundled UI does this using separate SVG subpaths.
+
+Consecutive predicted arcs are joined using directed shortest road paths only
+when the intermediate connector is within `min(600 m, 50 m + 3 × GPS step)`.
+This conservative display heuristic has not been learned from evaluator data.
+Missing predictions, decoder restarts, long time/jump gaps and absent/too-long
+network connections split the geometry instead. It is not a claim that inserted
+intermediate arcs are the true travelled route.
+
+`route_geometry` reports segment count, connector-arc count and break reasons.
+For older clients, `predicted_route` is the longest continuous segment only;
+`legacy_route_is_partial` warns when it omits other pieces. Update Laptop 2's
+UI alongside the API to display all segments.
+
+`predicted_arcs` and reported prediction accuracy/continuity remain unchanged.
+Inserted arcs are display-only and do not inflate classifier or HMM scores.
+Timing includes a separate `route_geometry_ms` field.
+
 ## Self-test (development trips only)
 ```powershell
 python -m api.test_api
