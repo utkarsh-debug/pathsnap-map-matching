@@ -1,5 +1,6 @@
 {
-  "objective": "maximise mean macro F1 over 5-fold GroupKFold (groups=trip) on 78 usable training trips",
+  "model": "XGBoost",
+  "objective": "maximise mean CV observation-level Top-1 over 5-fold GroupKFold (groups=trip) on all 80 training trips",
   "space": {
     "n_estimators": "int [100, 600]",
     "learning_rate": "float log-uniform [0.01, 0.3]",
@@ -11,9 +12,19 @@
     "reg_alpha": "float log-uniform [0.001, 10]",
     "gamma": "float uniform [0, 5]"
   },
-  "untuned_baseline": {
-    "n_estimators": 300,
-    "learning_rate": 0.05,
-    "max_depth": 6
-  }
+  "justification": {
+    "n_estimators": "number of boosting rounds/trees; the untuned model uses 300, so the range brackets it from under- to over-fitted",
+    "learning_rate": "log scale because its effect is multiplicative; 0.05 (untuned) sits inside; small values need more trees",
+    "max_depth": "tree depth controls interaction order; 6 (untuned) is inside; >10 overfits on ~1.9M rows of noisy labels",
+    "min_child_weight": "minimum hessian per leaf: larger values regularise noisy-label regions (e.g. the 2 unreliable trips)",
+    "subsample": "row subsampling per tree (decorrelates trees); below 0.5 loses too much signal",
+    "colsample_bytree": "feature subsampling per tree; useful because several of the 19 features are correlated (distance family)",
+    "reg_lambda": "L2 leaf-weight penalty, log scale; default is 1",
+    "reg_alpha": "L1 leaf-weight penalty, log scale; small default effect, allowed to grow for sparsity",
+    "gamma": "minimum loss reduction to split; prunes splits that only fit label noise"
+  },
+  "n_trials": 40,
+  "sampler": "TPE",
+  "seed": 42,
+  "untuned_baseline_config": "n_estimators=300, lr=0.05, max_depth=6, hist"
 }

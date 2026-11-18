@@ -50,6 +50,24 @@ SPACES = {
 }
 
 
+# Why each range was chosen (written to results/bo_search_space.json; PDF asks for a justified search space)
+RATIONALE = {
+    "n_estimators": "number of boosting rounds/trees; the untuned model uses 300, so the range brackets it from under- to over-fitted",
+    "learning_rate": "log scale because its effect is multiplicative; 0.05 (untuned) sits inside; small values need more trees",
+    "max_depth": "tree depth controls interaction order; 6 (untuned) is inside; >10 overfits on ~1.9M rows of noisy labels",
+    "min_child_weight": "minimum hessian per leaf: larger values regularise noisy-label regions (e.g. the 2 unreliable trips)",
+    "subsample": "row subsampling per tree (decorrelates trees); below 0.5 loses too much signal",
+    "colsample_bytree": "feature subsampling per tree; useful because several of the 19 features are correlated (distance family)",
+    "reg_lambda": "L2 leaf-weight penalty, log scale; default is 1",
+    "reg_alpha": "L1 leaf-weight penalty, log scale; small default effect, allowed to grow for sparsity",
+    "gamma": "minimum loss reduction to split; prunes splits that only fit label noise",
+    "num_leaves": "main complexity control for leaf-wise LightGBM; 31 (untuned) is inside",
+    "min_child_samples": "minimum rows per leaf, log scale; regularises against noisy labels",
+    "max_features": "fraction of features tried per split (random-forest decorrelation)",
+    "min_samples_leaf": "minimum rows per leaf, log scale; regularises against noisy labels",
+}
+
+
 def suggest(name, t):
     if name == "XGBoost":
         return dict(n_estimators=t.suggest_int("n_estimators", 100, 600),
@@ -142,6 +160,8 @@ def main(n_trials):
     (RESULTS_DIR / "bo_search_space.json").write_text(json.dumps(
         {"model": name, "objective": "maximise mean CV observation-level Top-1 over 5-fold GroupKFold (groups=trip) "
                                      "on all 80 training trips", "space": SPACES[name],
+         "justification": {k: RATIONALE.get(k, "") for k in SPACES[name]},
+         "n_trials": n_trials, "sampler": "TPE", "seed": SEED,
          "untuned_baseline_config": MODELS[name]["config"]}, indent=2))
 
     # tuned vs untuned: identical folds, metrics and partitions
