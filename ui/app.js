@@ -173,9 +173,12 @@ function validLatLon(point) {
   return Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
 }
 
-function projectRoute(gpsInput, routeInput) {
+function projectRoute(gpsInput, routeInput, segmentsInput) {
   const gps = Array.isArray(gpsInput) ? gpsInput.filter(validLatLon).map(([lat, lon]) => [Number(lat), Number(lon)]) : [];
-  const route = Array.isArray(routeInput) ? routeInput.filter(validLatLon).map(([lat, lon]) => [Number(lat), Number(lon)]) : [];
+  const sourceSegments = Array.isArray(segmentsInput) ? segmentsInput : [routeInput];
+  const segments = sourceSegments.filter(Array.isArray).map(segment =>
+    segment.filter(validLatLon).map(([lat, lon]) => [Number(lat), Number(lon)]));
+  const route = segments.flat();
   const combined = [...gps, ...route];
   if (!combined.length) return null;
 
@@ -199,7 +202,7 @@ function projectRoute(gpsInput, routeInput) {
     x: left + (lon * longitudeScale - minX) * scale,
     y: height - (top + (lat - minY) * scale),
   });
-  return { gps, route, toScreen, width, height };
+  return { gps, route, segments, toScreen, width, height };
 }
 
 function pathData(points, toScreen) {
@@ -210,14 +213,14 @@ function pathData(points, toScreen) {
   }).join(" ");
 }
 
-function drawMap(gpsInput, routeInput) {
+function drawMap(gpsInput, routeInput, segmentsInput) {
   elements.mapGrid.replaceChildren();
   elements.gpsPoints.replaceChildren();
   elements.routeMarkers.replaceChildren();
   elements.gpsTrace.setAttribute("d", "");
   elements.predictedPath.setAttribute("d", "");
 
-  const plot = projectRoute(gpsInput, routeInput);
+  const plot = projectRoute(gpsInput, routeInput, segmentsInput);
   if (!plot) {
     elements.routeMap.classList.add("hidden");
     elements.mapEmpty.classList.remove("hidden");
@@ -244,7 +247,8 @@ function drawMap(gpsInput, routeInput) {
     elements.gpsPoints.append(svgElement("circle", { cx: p.x, cy: p.y, r: 2.15, class: "gps-point" }));
   }
 
-  elements.predictedPath.setAttribute("d", pathData(plot.route, plot.toScreen));
+  elements.predictedPath.setAttribute("d",
+    plot.segments.map(segment => pathData(segment, plot.toScreen)).join(" "));
   if (plot.route.length) {
     const first = plot.toScreen(plot.route[0]);
     const last = plot.toScreen(plot.route[plot.route.length - 1]);
@@ -252,8 +256,8 @@ function drawMap(gpsInput, routeInput) {
     elements.routeMarkers.append(svgElement("circle", { cx: last.x, cy: last.y, r: 5, class: "route-end" }));
   }
 
-  elements.mapSummary.textContent = `${plot.gps.length.toLocaleString()} GPS observations · ${plot.route.length.toLocaleString()} predicted route coordinates`;
-  elements.mapCaption.textContent = "Longitude and latitude · start to end";
+  elements.mapSummary.textContent = `${plot.gps.length.toLocaleString()} GPS observations · ${plot.route.length.toLocaleString()} predicted route coordinates · ${plot.segments.length} segment(s)`;
+  elements.mapCaption.textContent = "Longitude and latitude · gaps are not connected; intermediate road connectors are display-only";
 }
 
 function formatPercent(value) {
@@ -300,7 +304,7 @@ function renderPrediction(result) {
   elements.resultsContent.classList.remove("hidden");
   elements.resultTripId.textContent = result.trip_id || elements.tripSelect.value || "—";
   elements.resultModel.textContent = `${result.model || "Model"} · ${result.decoder || "decoder unavailable"}`;
-  drawMap(result.gps, result.predicted_route);
+  drawMap(result.gps, result.predicted_route, result.predicted_route_segments);
   renderMetrics(result.metrics, result.timings_ms);
   elements.lastUpdated.textContent = `Prediction complete · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
 }

@@ -16,6 +16,8 @@ from src.candidates import build_index
 from src.features import FEATURES, build_features
 from src.io import load_trip
 from .config import ARTIFACT_DIR, DATA_ROOT
+from .route_geometry import build_route_geometry
+from hmm.viterbi import TripGraph
 
 log = logging.getLogger("pathsnap.api")
 
@@ -101,16 +103,24 @@ class Pipeline:
         clf[best["obs"].values] = best["arc"].values
         t_clf = time.perf_counter()
         hmm_pred, final = None, clf.copy()
+        graph = TripGraph(trip.nodes[["x", "y"]].values, trip.arcs.u.values, trip.arcs.v.values)
+        breaks = []
         if self.hmm:
             h = self.hmm
-            graph = h["TripGraph"](trip.nodes[["x", "y"]].values, trip.arcs.u.values, trip.arcs.v.values)
             cands = h["candidates_from_frame"](feats[["obs", "arc", "frac", "p", "rank"]], n)
-            hmm_pred, _breaks = h["viterbi_decode"](graph, trip.track[["x", "y"]].values,
+            hmm_pred, breaks = h["viterbi_decode"](graph, trip.track[["x", "y"]].values,
                                                     trip.track["t"].values, cands, h["params"])
             final = np.where(hmm_pred >= 0, hmm_pred, clf)
+        t_decode = time.perf_counter()
+        params = self.hmm["params"] if self.hmm else None
+        geometry = build_route_geometry(
+            final, trip, graph, breaks,
+            max_dt=params.max_dt if params else 10.,
+            max_jump=params.max_jump if params else 250.)
         t_end = time.perf_counter()
         timings = {"load_ms": (t_load - t0) * 1000, "candidates_features_ms": (t_feat - t_load) * 1000,
-                   "classifier_ms": (t_clf - t_feat) * 1000, "hmm_ms": (t_end - t_clf) * 1000,
+                   "classifier_ms": (t_clf - t_feat) * 1000, "hmm_ms": (t_decode - t_clf) * 1000,
+                   "route_geometry_ms": (t_end - t_decode) * 1000,
                    "total_ms": (t_end - t0) * 1000}
         public = {
             "trip_id": trip_id,
@@ -119,22 +129,13 @@ class Pipeline:
             "decoder": "hmm_viterbi" if self.hmm else "classifier_only",
             "gps": np.round(trip.track[["lat", "lon"]].values, 6).tolist(),
             "predicted_arcs": final.tolist(),
-            "predicted_route": route_polyline(final, trip),
+            **geometry,
             "timings_ms": {k: round(v, 1) for k, v in timings.items()},
         }
         return public, Internals(trip, feats, clf, final, hmm_pred, timings)
 
 
 def route_polyline(arcs, trip):
-    """[lat, lon] polyline of the predicted road segments in travel order (consecutive duplicates merged)."""
-    seq = [int(a) for a in arcs if a >= 0]
-    seq = [a for i, a in enumerate(seq) if i == 0 or a != seq[i - 1]]
-    lon, lat = trip.nodes["lon"].values, trip.nodes["lat"].values
-    u, v = trip.arcs.u.values, trip.arcs.v.values
-    pts = []
-    for a in seq:
-        for node in (u[a], v[a]):
-            pt = [round(float(lat[node]), 6), round(float(lon[node]), 6)]
-            if not pts or pts[-1] != pt:
-                pts.append(pt)
-    return pts
+    """Legacy helper: return only the longest safe continuous segment."""
+    graph = TripGraph(trip.nodes[["x", "y"]].values, trip.arcs.u.values, trip.arcs.v.values)
+    return build_route_geometry(arcs, trip, graph)["predicted_route"]
