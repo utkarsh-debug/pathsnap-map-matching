@@ -5,6 +5,8 @@ Decoder parameters are tuned on TRAINING trips only (out-of-fold probabilities, 
 scored a trip it was trained on); the 10 student-test trips are used for the development-stage comparison.
 Writes results/hmm_params.json, hmm_tuning_trials.csv, hmm_comparison_per_trip.csv, hmm_comparison.csv."""
 import json
+import hashlib
+from difflib import SequenceMatcher
 import sys
 import time
 
@@ -28,7 +30,12 @@ TUNE_TRIPS = 20
 def oof_probabilities(tr, params):
     """Out-of-fold probabilities for the training trips (same GroupKFold as model comparison)."""
     path = MODEL_DIR / "oof_XGBoost_tuned.parquet"
-    if path.exists():
+    manifest = path.with_suffix(".json")
+    signature = hashlib.sha256(json.dumps(
+        {"params": params, "features": FEATURES, "rows": len(tr),
+         "trips": sorted(tr.trip.unique().tolist()), "folds": 5, "seed": SEED},
+        sort_keys=True).encode()).hexdigest()
+    if path.exists() and manifest.exists() and json.loads(manifest.read_text()).get("signature") == signature:
         return pd.read_parquet(path)
     parts = []
     for a, b in GroupKFold(n_splits=5).split(tr, groups=tr["trip"].values):
@@ -39,6 +46,7 @@ def oof_probabilities(tr, params):
         parts.append(d)
     out = pd.concat(parts, ignore_index=True)
     out.to_parquet(path)
+    manifest.write_text(json.dumps({"signature": signature}))
     return out
 
 
@@ -74,17 +82,29 @@ def metrics(pred, d):
     ps, rs = set(pred[pred >= 0].tolist()), d.ref_set
     inter = len(ps & rs)
     prec, rec = inter / max(len(ps), 1), inter / max(len(rs), 1)
+    def collapse(seq):
+        return [int(a) for i, a in enumerate(seq) if i == 0 or a != seq[i - 1]]
+    # Ordered sequence similarity of per-observation arc runs, not just unordered arc-set overlap.
+    # Reference is aligned observation labels; this is not exact recovery of every raw .route arc.
+    sequence_similarity = SequenceMatcher(
+        None, collapse(d.label), collapse(pred), autojunk=False).ratio()
     return dict(top1=float((pred == d.label).mean()), cont_ok=ok, cont_tot=tot,
+                sequence_similarity=sequence_similarity,
                 arc_precision=prec, arc_recall=rec,
                 arc_f1=2 * prec * rec / max(prec + rec, 1e-9))
 
 
-def evaluate_set(datas, params):
+def evaluate_set(datas, params, save_predictions=False):
     rows = []
     for d in datas:
         cands = [(a.copy(), f.copy(), p.copy()) for a, f, p in d.cands]   # decoder mutates nothing, copy to be safe
         t0 = time.time()
         pred, breaks = viterbi_decode(d.graph, d.xy, d.t, cands, params)
+        if save_predictions:
+            folder = PROCESSED_DIR / "hmm"
+            folder.mkdir(exist_ok=True)
+            pd.DataFrame({"obs": np.arange(d.n), "classifier_arc": d.clf,
+                          "hmm_arc": pred}).to_parquet(folder / f"{d.trip}.parquet")
         m = metrics(pred, d)
         m.update(trip=d.trip, n_obs=d.n, n_breaks=len(breaks), decode_s=time.time() - t0)
         c = metrics(d.clf, d)
@@ -100,6 +120,8 @@ def summarise(df):
                clf_continuity=df.clf_cont_ok.sum() / max(df.clf_cont_tot.sum(), 1),
                hmm_continuity=df.cont_ok.sum() / max(df.cont_tot.sum(), 1),
                clf_arc_f1=df.clf_arc_f1.mean(), hmm_arc_f1=df.arc_f1.mean(),
+               clf_sequence_similarity=df.clf_sequence_similarity.mean(),
+               hmm_sequence_similarity=df.sequence_similarity.mean(),
                hmm_better_trips=int((df.top1 > df.clf_top1).sum()), hmm_worse_trips=int((df.top1 < df.clf_top1).sum()),
                hmm_equal_trips=int((df.top1 == df.clf_top1).sum()))
     return out
@@ -142,16 +164,24 @@ def main(n_trials=30, tag="XGBoost_tuned"):
     best = study.best_params
     (RESULTS_DIR / "hmm_params.json").write_text(json.dumps(
         {"best_params": best, "tuning_objective": "mean pointwise Top-1 of HMM output on 20 training trips (OOF probabilities)",
-         "tuning_trips": tune_ids, "n_trials": n_trials,
+         "tuning_trips": [str(t) for t in tune_ids], "n_trials": n_trials,
+         "sequence_metric": "SequenceMatcher ratio on consecutive-deduplicated per-observation arc labels; autojunk=False",
          "fixed": {"max_jump": 250.0, "search_radius": 600.0}}, indent=2))
     params = HMMParams(**best)
+    del tune
 
     # full comparison: all usable training trips (OOF) and the 10 student-test trips (final-model probabilities)
     res = {}
     for name, part, preds, labels in (("train_oof", "train", oof, lab_tr), ("student_test", "student_test", st_pred, lab_st)):
         ids = sorted(preds.trip.unique())
-        datas = [TripData(part, t, preds[preds.trip == t], labels[labels.trip == t]) for t in ids]
-        df = evaluate_set(datas, params)
+        # Process one graph at a time to bound memory on the large training networks.
+        rows = []
+        for t in ids:
+            data = TripData(part, t, preds[preds.trip == t], labels[labels.trip == t])
+            row = evaluate_set([data], params, save_predictions=True)
+            rows.append(row)
+            print(f"{name}/{t}: classifier={row.clf_top1.iloc[0]:.4f} HMM={row.top1.iloc[0]:.4f}", flush=True)
+        df = pd.concat(rows, ignore_index=True)
         df.insert(0, "partition", name)
         res[name] = df
     per = pd.concat(res.values(), ignore_index=True)

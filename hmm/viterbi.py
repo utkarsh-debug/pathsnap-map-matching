@@ -49,6 +49,17 @@ class TripGraph:
         self.n = n
         w = np.maximum(self.arc_len, 1e-3)   # zero-length arcs would be dropped by csr otherwise
         self.csr = csr_matrix((w, (self.u, self.v)), shape=(n, n))
+        self.edge_arc = {}
+        for arc, (u, v) in enumerate(zip(self.u, self.v)):
+            key = (int(u), int(v))
+            old = self.edge_arc.get(key)
+            if old is None or self.arc_len[arc] < self.arc_len[old]:
+                self.edge_arc[key] = arc
+        # Sparse constructors sum duplicate edges; shortest paths need the shortest parallel arc instead.
+        pairs = list(self.edge_arc)
+        self.csr = csr_matrix(
+            ([max(self.arc_len[self.edge_arc[p]], 1e-3) for p in pairs],
+             ([p[0] for p in pairs], [p[1] for p in pairs])), shape=(n, n))
         self._cache = {}
 
     def reach(self, src, radius):
@@ -135,6 +146,8 @@ def viterbi_decode(graph, track_xy, track_t, obs_cands, params=HMMParams()):
 def candidates_from_frame(df, n_obs):
     """Group a candidate frame (obs, arc, frac, p) into per-observation arrays."""
     out = [(np.empty(0, int), np.empty(0), np.empty(0)) for _ in range(n_obs)]
+    if df.empty:
+        return out
     df = df.sort_values(["obs", "rank"] if "rank" in df else ["obs"])
     obs = df["obs"].values
     bounds = np.flatnonzero(np.r_[True, obs[1:] != obs[:-1], True])
@@ -170,11 +183,6 @@ def stitch_route(graph, pred_arcs):
         path = path[::-1]
         # nodes -> arcs via lookup
         for x, y in zip(path[:-1], path[1:]):
-            lo, hi = graph.csr.indptr[x], graph.csr.indptr[x + 1]
-            cols = graph.csr.indices[lo:hi]
-            # recover an arc id with u==x, v==y
-            m = np.flatnonzero((graph.u == x) & (graph.v == y))
-            if len(m):
-                route.append(int(m[0]))
+            route.append(int(graph.edge_arc[(x, y)]))
         route.append(a)
     return route, gaps
