@@ -1,0 +1,41 @@
+{
+  "model_name": "XGBoost_tuned",
+  "model_file": "model.joblib",
+  "features": [
+    "dist",
+    "dist_rel",
+    "rank",
+    "n_cands",
+    "frac",
+    "arc_len",
+    "out_deg_v",
+    "in_deg_u",
+    "cos_head",
+    "moving",
+    "speed",
+    "dt_prev",
+    "dt_next",
+    "step_prev",
+    "step_next",
+    "dist_prev_same",
+    "dist_next_same",
+    "adj_prev_best",
+    "adj_next_best"
+  ],
+  "candidates": {
+    "k": 15,
+    "radius_m": 80.0
+  },
+  "seed": 42,
+  "hyperparameters": {
+    "n_estimators": 389,
+    "learning_rate": 0.05570473223314245,
+    "max_depth": 9,
+    "min_child_weight": 2.495185462577053,
+    "subsample": 0.5973569671820553,
+    "colsample_bytree": 0.594505306986173,
+    "reg_lambda": 0.09716587046530163,
+    "reg_alpha": 0.06400617208628398,
+    "gamma": 4.753784716061056
+  }
+}
