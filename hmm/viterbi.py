@@ -199,7 +199,11 @@ def _transition_matrix(previous_states: list[Candidate], current_states: list[Ca
                        params: HMMParams) -> np.ndarray:
     transitions = np.full((len(previous_states), len(current_states)), -np.inf, dtype=float)
     sigma = params.transition_sigma_m + params.transition_sigma_per_s * dt_s
-    max_network_distance = params.max_transition_distance_m
+    max_network_distance = min(params.max_transition_distance_m,
+                               params.max_speed_mps * dt_s + 4.0 * sigma)
+    # A small distance bucket reuses bounded Dijkstra results during tuning.
+    max_network_distance = min(params.max_transition_distance_m,
+                               float(np.ceil(max_network_distance / 25.0) * 25.0))
     for i, previous in enumerate(previous_states):
         for j, current in enumerate(current_states):
             route_distance = graph.distance_between_candidates(previous, current, max_network_distance)

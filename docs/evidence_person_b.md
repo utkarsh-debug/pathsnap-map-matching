@@ -78,7 +78,7 @@ For the report's deployment section, capture genuine evidence when Laptop 1 is r
 2. A Laptop 1 terminal screenshot showing the incoming `POST /predict` request and successful response status.
 3. Record the model, decoder, trip ID, API address, date, and outcome used for those screenshots.
 
-The current checked-out workspace has no raw dataset directory, and the HMM decoder and its parameter file are absent. A real end-to-end screenshot must be taken after those external deployment dependencies are available; do not substitute a fabricated response or screenshot.
+The checked-out workspace now includes the HMM/Viterbi decoder and an initial parameter file. That file is explicitly marked `initial_defaults_not_tuned`; it must not be described as experimentally tuned. The configured workspace does not currently contain the raw training and student-test partitions or their processed feature tables, so no HMM tuning metrics or classifier-versus-HMM results have been generated. A real end-to-end screenshot must be taken after the permitted data partitions and Laptop 1 API are available; do not substitute a fabricated response or screenshot.
 
 ## Source files for checking these facts
 

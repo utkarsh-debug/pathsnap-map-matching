@@ -62,6 +62,9 @@ def _pipeline_config() -> dict:
         raise ValueError("API artifact feature list does not match src/features.py")
     if not str(cfg.get("model_name", "")).startswith("XGBoost"):
         raise ValueError("HMM tuning currently expects the selected XGBoost model")
+    candidate_cfg = cfg.get("candidates", {})
+    if int(candidate_cfg.get("k", -1)) != 15 or float(candidate_cfg.get("radius_m", -1)) != 80.0:
+        raise ValueError("tuning expects the checked-in 15-candidate, 80 m training feature configuration")
     return cfg
 
 
@@ -146,8 +149,7 @@ def _context_from_frame(partition: str, trip_id: str, frame: pd.DataFrame,
     )
 
 
-def _training_contexts(train: pd.DataFrame, oof_probabilities: np.ndarray,
-                       cfg: dict) -> list[TripContext]:
+def _training_contexts(train: pd.DataFrame, oof_probabilities: np.ndarray) -> list[TripContext]:
     with_probabilities = train.copy()
     with_probabilities["_p"] = oof_probabilities
     contexts = []
@@ -257,7 +259,7 @@ def main(n_trials: int = 40):
 
     start = time.perf_counter()
     oof_probabilities = _out_of_fold_probabilities(train, cfg)
-    train_contexts = _training_contexts(train, oof_probabilities, cfg)
+    train_contexts = _training_contexts(train, oof_probabilities)
     student_contexts = _student_contexts(student, cfg)
     print(f"prepared {len(train_contexts)} OOF training and {len(student_contexts)} student-test trips "
           f"in {time.perf_counter() - start:.1f}s", flush=True)
