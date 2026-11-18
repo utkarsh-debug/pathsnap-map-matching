@@ -1,0 +1,70 @@
+DATA QUALITY SUMMARY
+====================
+partition       student_test          train
+trips              10.000000      80.000000
+obs_total       19160.000000  208417.000000
+obs_mean         1916.000000    2605.212500
+obs_min           262.000000     361.000000
+obs_max          3958.000000   19313.000000
+len_km_mean        29.748749      37.266039
+nodes_mean       9068.900000   24168.562500
+arcs_mean       18504.100000   48461.300000
+comps_mean         22.700000      39.012500
+isolated_total      0.000000       0.000000
+na_total            0.000000       0.000000
+
+Trips per metric CRS (UTM zone chosen from trip centroid):
+partition     crs       
+student_test  EPSG:32615     1
+              EPSG:32631     1
+              EPSG:32633     1
+              EPSG:32636     1
+              EPSG:32638     1
+              EPSG:32639     2
+              EPSG:32640     1
+              EPSG:32641     1
+              EPSG:32643     1
+train         EPSG:32614     1
+              EPSG:32615     1
+              EPSG:32616     2
+              EPSG:32617     3
+              EPSG:32622     1
+              EPSG:32629     3
+              EPSG:32630     9
+              EPSG:32631     6
+              EPSG:32632     8
+              EPSG:32633     6
+              EPSG:32634     5
+              EPSG:32635     3
+              EPSG:32636     4
+              EPSG:32637    10
+              EPSG:32638     3
+              EPSG:32639     2
+              EPSG:32640     1
+              EPSG:32641     3
+              EPSG:32643     1
+              EPSG:32648     1
+              EPSG:32651     1
+              EPSG:32653     3
+              EPSG:32721     1
+              EPSG:32722     1
+              EPSG:32735     1
+Trips with non-monotonic timestamps: 0
+Trips with missing values in .track: 0
+Trips with invalid route arc ids: 0
+Route contiguity (v[i]==u[i+1]) mean: 0.9994; min: 0.9813
+Mean % of 1 s steps: 94.32
+Trips with largest GPS time gap:
+partition     trip   dt_max  n_gaps_gt1s
+    train 00000090 153064.0          224
+    train 00000078  52810.0          712
+    train 00000069   2658.0           22
+    train 00000021   2161.0            6
+    train 00000011    909.0            1
+Trips with largest single-step jump (m):
+partition     trip  max_step_m
+    train 00000055  887.709377
+    train 00000043  639.390578
+    train 00000070  540.795617
+    train 00000054  510.395842
+    train 00000099  462.454994

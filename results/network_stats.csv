@@ -1,0 +1,3 @@
+partition,trips,obs_total,obs_mean,obs_min,obs_max,len_km_mean,nodes_mean,arcs_mean,comps_mean,isolated_total,na_total
+student_test,10,19160,1916.0,262,3958,29.748749175696876,9068.9,18504.1,22.7,0,0
+train,80,208417,2605.2125,361,19313,37.26603936603612,24168.5625,48461.3,39.0125,0,0
