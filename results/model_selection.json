@@ -1,0 +1,55 @@
+{
+  "selected_model": "XGBoost",
+  "selection_rule": "highest CV observation-level Top-1; tie-break lowest CV observation log loss",
+  "top1_cv_std_of_selected": 0.19509596156446632,
+  "rankings": {
+    "primary: CV Top-1 (all 80 trips)": [
+      "XGBoost",
+      "RandomForest",
+      "LightGBM",
+      "MLP",
+      "LogisticRegression",
+      "KNN"
+    ],
+    "check: CV Top-1 (reliable trips only)": [
+      "XGBoost",
+      "RandomForest",
+      "LightGBM",
+      "MLP",
+      "LogisticRegression",
+      "KNN"
+    ],
+    "check: CV observation log loss (lower better)": [
+      "XGBoost",
+      "RandomForest",
+      "LightGBM",
+      "MLP",
+      "LogisticRegression",
+      "KNN"
+    ],
+    "check: CV candidate macro F1": [
+      "RandomForest",
+      "XGBoost",
+      "LightGBM",
+      "MLP",
+      "KNN",
+      "LogisticRegression"
+    ],
+    "check: student-test Top-1": [
+      "XGBoost",
+      "LightGBM",
+      "RandomForest",
+      "MLP",
+      "KNN",
+      "LogisticRegression"
+    ],
+    "check: student-test observation log loss (lower better)": [
+      "XGBoost",
+      "LightGBM",
+      "RandomForest",
+      "MLP",
+      "LogisticRegression",
+      "KNN"
+    ]
+  }
+}
